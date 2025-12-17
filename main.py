@@ -55,21 +55,41 @@ CORNFLOWER_BLUE_LIGHT80 = RGBColor(222, 235, 247)
 PAKBENG_LAT = 19.8925
 PAKBENG_LON = 101.8117
 
-# 默认模板路径 - 支持本地和云端部署
+# 默认模板路径 - 支持本地、云端和环境变量部署
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 云端使用相对路径，本地开发使用绝对路径
-_CN_TEMPLATE_RELATIVE = os.path.join(SCRIPT_DIR, "template_cn.docx")
-_EN_TEMPLATE_RELATIVE = os.path.join(SCRIPT_DIR, "template_en.docx")
+def _init_templates():
+    """初始化模板文件，优先从环境变量加载"""
+    cn_path = os.path.join(SCRIPT_DIR, "template_cn.docx")
+    en_path = os.path.join(SCRIPT_DIR, "template_en.docx")
+    
+    # 如果模板文件不存在，尝试从环境变量创建
+    if not os.path.exists(cn_path):
+        cn_base64 = os.environ.get("TEMPLATE_CN_BASE64")
+        if cn_base64:
+            with open(cn_path, "wb") as f:
+                f.write(base64.b64decode(cn_base64))
+            print(f"Created CN template from environment variable")
+    
+    if not os.path.exists(en_path):
+        en_base64 = os.environ.get("TEMPLATE_EN_BASE64")
+        if en_base64:
+            with open(en_path, "wb") as f:
+                f.write(base64.b64decode(en_base64))
+            print(f"Created EN template from environment variable")
+    
+    # 返回模板路径
+    if os.path.exists(cn_path):
+        return cn_path, en_path
+    else:
+        # 本地开发时使用绝对路径
+        return (
+            r"d:\Projects\Dify\[CN]北本水电站施工日报.docx",
+            r"d:\Projects\Dify\[EN]Pak Beng daily construction report.docx"
+        )
 
-# 检查模板文件是否存在
-if os.path.exists(_CN_TEMPLATE_RELATIVE):
-    DEFAULT_CN_TEMPLATE = _CN_TEMPLATE_RELATIVE
-    DEFAULT_EN_TEMPLATE = _EN_TEMPLATE_RELATIVE
-else:
-    # 本地开发时使用绝对路径
-    DEFAULT_CN_TEMPLATE = r"d:\Projects\Dify\[CN]北本水电站施工日报.docx"
-    DEFAULT_EN_TEMPLATE = r"d:\Projects\Dify\[EN]Pak Beng daily construction report.docx"
+DEFAULT_CN_TEMPLATE, DEFAULT_EN_TEMPLATE = _init_templates()
+
 
 
 # 天气代码映射
