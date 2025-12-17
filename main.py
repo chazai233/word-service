@@ -56,18 +56,20 @@ PAKBENG_LAT = 19.8925
 PAKBENG_LON = 101.8117
 
 # 默认模板路径 - 支持本地和云端部署
-import os
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 尝试使用相对路径（云端部署），否则使用绝对路径（本地开发）
+# 云端使用相对路径，本地开发使用绝对路径
 _CN_TEMPLATE_RELATIVE = os.path.join(SCRIPT_DIR, "template_cn.docx")
 _EN_TEMPLATE_RELATIVE = os.path.join(SCRIPT_DIR, "template_en.docx")
-_CN_TEMPLATE_ABSOLUTE = r"d:\Projects\Dify\[CN]北本水电站施工日报.docx"
-_EN_TEMPLATE_ABSOLUTE = r"d:\Projects\Dify\[EN]Pak Beng daily construction report.docx"
 
-
-DEFAULT_CN_TEMPLATE = _CN_TEMPLATE_RELATIVE if os.path.exists(_CN_TEMPLATE_RELATIVE) else _CN_TEMPLATE_ABSOLUTE
-DEFAULT_EN_TEMPLATE = _EN_TEMPLATE_RELATIVE if os.path.exists(_EN_TEMPLATE_RELATIVE) else _EN_TEMPLATE_ABSOLUTE
+# 检查模板文件是否存在
+if os.path.exists(_CN_TEMPLATE_RELATIVE):
+    DEFAULT_CN_TEMPLATE = _CN_TEMPLATE_RELATIVE
+    DEFAULT_EN_TEMPLATE = _EN_TEMPLATE_RELATIVE
+else:
+    # 本地开发时使用绝对路径
+    DEFAULT_CN_TEMPLATE = r"d:\Projects\Dify\[CN]北本水电站施工日报.docx"
+    DEFAULT_EN_TEMPLATE = r"d:\Projects\Dify\[EN]Pak Beng daily construction report.docx"
 
 
 # 天气代码映射
