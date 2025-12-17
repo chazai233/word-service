@@ -873,7 +873,14 @@ def generate_from_templates(
 
 # ==================== API 端点 ====================
 
+@app.get("/")
+@app.head("/")
+async def root():
+    """根路径"""
+    return {"status": "ok", "service": "word-generator"}
+
 @app.get("/health")
+@app.head("/health")
 async def health_check():
     """健康检查"""
     return {"status": "healthy", "service": "word-generator"}
