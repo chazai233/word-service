@@ -1,0 +1,4 @@
+{
+    "chinese_data": "[{\"seq\":1,\"location\":\"右岸道路\",\"content\":\"砂石系统至采石场道路路面整平(EL.611m)\",\"quantity\":\"40m\",\"shift\":\"\"},{\"seq\":1,\"location\":\"右岸道路\",\"content\":\"洒水控制扬尘\",\"quantity\":\"1项\",\"shift\":\"\"},{\"seq\":2,\"location\":\"炸药库\",\"content\":\"硝铵炸药库房脚手架拼接\",\"quantity\":\"1项\",\"shift\":\"\"}]",
+    "english_data": "{\"translated_data\":[{\"seq\":1,\"location_en\":\"Right Bank Roads\",\"content_en\":\"Road surface leveling for aggregate system to quarry road (EL.611m)\",\"quantity_en\":\"40m\",\"remarks_en\":\"\"},{\"seq\":1,\"location_en\":\"Right Bank Roads\",\"content_en\":\"Dust suppression via watering\",\"quantity_en\":\"1 item\",\"remarks_en\":\"\"},{\"seq\":2,\"location_en\":\"Explosives Magazine\",\"content_en\":\"Scaffold assembly for ammonium nitrate magazine\",\"quantity_en\":\"1 item\",\"remarks_en\":\"\"}]}"
+}
