@@ -664,13 +664,10 @@ def create_chinese_table(doc: Document, data: List[TableRow]) -> None:
 def create_english_table(doc: Document, data: List[dict]) -> None:
     """
     创建英文格式表格
-    - 字体：Arial 11号
-    - 居中对齐，垂直居中
-    - 段前段后4磅，行距最小值8磅
-    - 默认边框
-    - 表头加粗 + 矢车菊蓝着色5浅色80%底纹
-    - 列宽根据内容自动调整
     """
+    print(f"DEBUG: create_english_table called with {len(data) if data else 0} rows")
+    if data and len(data) > 0:
+        print(f"DEBUG: Sample row in create_english_table: {data[0]}")
     if not data:
         return
     
@@ -707,10 +704,10 @@ def create_english_table(doc: Document, data: List[dict]) -> None:
     for item in data:
         data_rows.append([
             str(item.get('seq', '')),
-            item.get('location_en', ''),
-            item.get('content_en', ''),
-            item.get('quantity_en', item.get('quantity', '')),
-            item.get('remarks_en', item.get('shift', ''))
+            item.get('location_en') or item.get('location', ''),
+            item.get('content_en') or item.get('content', ''),
+            item.get('quantity_en') or item.get('quantity', ''),
+            item.get('remarks_en') or item.get('shift', '')
         ])
     
     # 自动调整列宽
@@ -723,49 +720,69 @@ def create_english_table(doc: Document, data: List[dict]) -> None:
         total_width=15.5
     )
     
-    # 数据行
-    done_seqs = set()
+    # 先填充所有内容
     row_idx = 1
-    
     for item in data:
         row = table.rows[row_idx]
-        seq = item.get('seq', 0)
         
-        if seq not in done_seqs:
-            merge_count = merge_info.get(seq, 1)
-            
-            # S/N
-            set_cell_text_with_mixed_fonts(row.cells[0], str(seq), 'Arial', 'Arial', Pt(11))
-            
-            # Construction Area
-            location_en = item.get('location_en', '')
-            set_cell_text_with_mixed_fonts(row.cells[1], location_en, 'Arial', 'Arial', Pt(11))
-            
-            # 合并单元格
-            if merge_count > 1:
-                start_cell = table.cell(row_idx, 0)
-                end_cell = table.cell(row_idx + merge_count - 1, 0)
-                start_cell.merge(end_cell)
-                
-                start_cell = table.cell(row_idx, 1)
-                end_cell = table.cell(row_idx + merge_count - 1, 1)
-                start_cell.merge(end_cell)
-            
-            done_seqs.add(seq)
+        # S/N
+        set_cell_text_with_mixed_fonts(row.cells[0], str(item.get('seq', '')), 'Arial', 'Arial', Pt(11))
+        
+        # Construction Area
+        location_en = item.get('location_en') or item.get('location', '')
+        set_cell_text_with_mixed_fonts(row.cells[1], location_en, 'Arial', 'Arial', Pt(11))
         
         # Activities
-        content_en = item.get('content_en', '')
+        content_en = item.get('content_en') or item.get('content', '')
         set_cell_text_with_mixed_fonts(row.cells[2], content_en, 'Arial', 'Arial', Pt(11))
         
         # Quantities
-        quantity_en = item.get('quantity_en', item.get('quantity', ''))
+        quantity_en = item.get('quantity_en') or item.get('quantity', '')
         set_cell_text_with_mixed_fonts(row.cells[3], quantity_en, 'Arial', 'Arial', Pt(11))
         
         # Remarks
-        remarks = item.get('remarks_en', item.get('shift', ''))
+        remarks = item.get('remarks_en') or item.get('shift', '')
         set_cell_text_with_mixed_fonts(row.cells[4], remarks, 'Arial', 'Arial', Pt(11))
         
         row_idx += 1
+
+    # 然后处理单元格合并 (只合并连续相同序号的列)
+    if len(data) > 1:
+        current_seq = None
+        start_idx = 1
+        count = 0
+        
+        for i, item in enumerate(data):
+            seq = item.get('seq')
+            row_idx = i + 1
+            
+            if seq == current_seq and seq is not None:
+                count += 1
+            else:
+                # 结束上一个合并组
+                if count > 1:
+                    # 合并序号列
+                    start_cell = table.cell(start_idx, 0)
+                    end_cell = table.cell(start_idx + count - 1, 0)
+                    start_cell.merge(end_cell)
+                    # 合并施工部位列
+                    start_cell = table.cell(start_idx, 1)
+                    end_cell = table.cell(start_idx + count - 1, 1)
+                    start_cell.merge(end_cell)
+                
+                # 开始新组
+                current_seq = seq
+                start_idx = row_idx
+                count = 1
+        
+        # 处理最后一组
+        if count > 1:
+            start_cell = table.cell(start_idx, 0)
+            end_cell = table.cell(start_idx + count - 1, 0)
+            start_cell.merge(end_cell)
+            start_cell = table.cell(start_idx, 1)
+            end_cell = table.cell(start_idx + count - 1, 1)
+            start_cell.merge(end_cell)
     
     return table
 
@@ -805,20 +822,39 @@ def insert_table_after_heading(doc: Document, heading_text: str, table, delete_e
     """
     将表格移动到指定标题后面
     如果 delete_existing=True，会先删除标题后面已存在的表格
+    支持多备选标题匹配（英文版常用）
     """
-    # 先删除已存在的表格
+    possible_headings = [heading_text]
+    if heading_text == "Daily Construction Statistics Table":
+        possible_headings.extend(["Daily Construction Statistics", "2. On-site Construction Activities", "Construction Activities"])
+    
+    # 先尝试删除已存在的表格
     if delete_existing:
-        delete_table_after_heading(doc, heading_text)
+        found_to_delete = False
+        for head in possible_headings:
+            if delete_table_after_heading(doc, head):
+                found_to_delete = True
+                print(f"DEBUG: Deleted existing table after heading '{head}'")
+                break
     
     # 查找标题段落
     target_paragraph = None
+    matched_heading = None
     for paragraph in doc.paragraphs:
-        if heading_text in paragraph.text:
-            target_paragraph = paragraph
+        p_text = paragraph.text.strip()
+        for head in possible_headings:
+            if head in p_text:
+                target_paragraph = paragraph
+                matched_heading = head
+                break
+        if target_paragraph:
             break
     
     if target_paragraph is None:
+        print(f"DEBUG: Could not find any target heading in {possible_headings}")
         return False
+    
+    print(f"DEBUG: Found target heading '{matched_heading}' in paragraph: '{target_paragraph.text}'")
     
     # 获取表格的 XML 元素
     tbl = table._tbl
@@ -1081,6 +1117,12 @@ async def generate_from_template(request: TemplateGenerateRequest):
         cn_data = json.loads(request.chinese_data)
         en_data = json.loads(request.english_data) if request.english_data else None
         
+        print(f"DEBUG: Received chinese_data length: {len(request.chinese_data)}")
+        if en_data:
+            print(f"DEBUG: Received english_data type: {type(en_data)}")
+        else:
+            print("DEBUG: No english_data received")
+
         # 转换为 TableRow 对象
         chinese_rows = [TableRow(**item) for item in cn_data]
         
@@ -1088,16 +1130,25 @@ async def generate_from_template(request: TemplateGenerateRequest):
         if en_data:
             if isinstance(en_data, dict) and 'translated_data' in en_data:
                 english_rows = en_data['translated_data']
+                print("DEBUG: Extracted 'translated_data' from dict")
             else:
                 english_rows = en_data
+                print("DEBUG: english_data is directly rows")
         else:
             english_rows = []
         
+        print(f"DEBUG: number of english_rows: {len(english_rows)}")
+        if len(english_rows) > 0:
+            print(f"DEBUG: First english row: {english_rows[0]}")
+
         results = {}
         
         # 获取昨天日期和天气数据（只请求一次 API）
         yesterday = get_yesterday_date()
         weather_data = get_pakbeng_weather(yesterday)
+        
+        print(f"DEBUG: cn_template_base64 provided: {bool(request.cn_template_base64)}")
+        print(f"DEBUG: en_template_base64 provided: {bool(request.en_template_base64)}")
         
         # 生成中文文档
         if request.cn_template_base64:
@@ -1128,8 +1179,8 @@ async def generate_from_template(request: TemplateGenerateRequest):
         results['cn_document_base64'] = base64.b64encode(cn_buffer.read()).decode('utf-8')
         results['cn_filename'] = "施工日报CN.docx"
         
-        # 生成英文文档
-        if english_rows:
+        # 生成英文文档 (即使没有 english_rows，如果提供了模板，也生成文档以更新天气)
+        if english_rows or request.en_template_base64 or os.path.exists(DEFAULT_EN_TEMPLATE):
             if request.en_template_base64:
                 en_template_bytes = base64.b64decode(request.en_template_base64)
                 en_doc = Document(io.BytesIO(en_template_bytes))
@@ -1146,10 +1197,14 @@ async def generate_from_template(request: TemplateGenerateRequest):
                 update_document_date_weather(en_doc, is_english=True, 
                                              weather_data=weather_data, 
                                              yesterday=yesterday)
-                en_table = create_english_table(en_doc, english_rows)
-                if en_table:
-                    insert_table_after_heading(en_doc, "Daily Construction Statistics Table", en_table)
-            else:
+                if english_rows:
+                    en_table = create_english_table(en_doc, english_rows)
+                    if en_table:
+                        if not insert_table_after_heading(en_doc, "Daily Construction Statistics Table", en_table):
+                            print("DEBUG: Failed to insert EN table after heading 'Daily Construction Statistics Table'")
+                else:
+                    print("DEBUG: No english_rows provided, only updating date/weather in EN doc")
+            elif english_rows:
                 create_english_table(en_doc, english_rows)
             
             en_buffer = io.BytesIO()
