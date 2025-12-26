@@ -1368,6 +1368,7 @@ def format_line_with_bold_keywords(paragraph, line: str):
 class UpdateDateWeatherRequest(BaseModel):
     """更新日期天气请求"""
     document_base64: str  # Base64 编码的文档
+    feishu_token: Optional[str] = None  # 飞书access_token（可选，如果提供则重新上传）
     
 
 class UpdateDateWeatherResponse(BaseModel):
@@ -1375,6 +1376,7 @@ class UpdateDateWeatherResponse(BaseModel):
     success: bool
     message: str
     document_base64: Optional[str] = None
+    file_key: Optional[str] = None  # 飞书文件key（如果重新上传）
 
 
 @app.post("/update-date-weather", response_model=UpdateDateWeatherResponse)
@@ -1446,11 +1448,50 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
+        doc_bytes = buffer.read()
+        doc_base64 = base64.b64encode(doc_bytes).decode('utf-8')
         
+        # 如果提供了feishu_token，重新上传到飞书
+        file_key = None
+        if request.feishu_token:
+            try:
+                upload_result = await upload_to_feishu_files(
+                    doc_bytes=doc_bytes,
+                    filename="施工日报.docx",
+                    feishu_token=request.feishu_token
+                )
+                
+                if upload_result["success"]:
+                    file_key = upload_result["file_key"]
+                    return UpdateDateWeatherResponse(
+                        success=True,
+                        message="日期天气更新并上传成功",
+                        document_base64=doc_base64,
+                        file_key=file_key
+                    )
+                else:
+                    # 上传失败，但更新成功
+                    return UpdateDateWeatherResponse(
+                        success=True,
+                        message=f"日期天气更新成功，但上传失败: {upload_result.get('error', '未知错误')}",
+                        document_base64=doc_base64,
+                        file_key=None
+                    )
+            except Exception as e:
+                # 上传异常，但更新成功
+                return UpdateDateWeatherResponse(
+                    success=True,
+                    message=f"日期天气更新成功，但上传异常: {str(e)}",
+                    document_base64=doc_base64,
+                    file_key=None
+                )
+        
+        # 没有提供token，只返回更新后的文档
         return UpdateDateWeatherResponse(
             success=True,
             message="日期天气更新成功",
-            document_base64=base64.b64encode(buffer.read()).decode('utf-8')
+            document_base64=doc_base64,
+            file_key=None
         )
     
     except Exception as e:
