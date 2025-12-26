@@ -1239,7 +1239,7 @@ class FillTemplateRequest(BaseModel):
     table_index: int = 0  # 目标表格索引（从0开始）
     row_index: int = 4  # 目标行索引（从0开始，第5行=4）
     col_index: int = 2  # 目标列索引（从0开始，第3列=2）
-    update_date_weather: bool = True  # 是否更新日期和天气
+    update_date_weather: bool = False  # 是否更新日期和天气（默认False避免破坏格式）
     upload_to_feishu: bool = False  # 是否上传到飞书
     feishu_token: Optional[str] = None  # 飞书access_token
 
@@ -1363,6 +1363,98 @@ def format_line_with_bold_keywords(paragraph, line: str):
         run.font.name = 'Times New Roman'
         run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
         run.font.size = Pt(10.5)
+
+
+class UpdateDateWeatherRequest(BaseModel):
+    """更新日期天气请求"""
+    document_base64: str  # Base64 编码的文档
+    
+
+class UpdateDateWeatherResponse(BaseModel):
+    """更新日期天气响应"""
+    success: bool
+    message: str
+    document_base64: Optional[str] = None
+
+
+@app.post("/update-date-weather", response_model=UpdateDateWeatherResponse)
+async def update_date_weather_only(request: UpdateDateWeatherRequest):
+    """
+    只更新第1行的日期和天气，不影响其他单元格
+    
+    - document_base64: Base64编码的Word文档
+    """
+    try:
+        # 解码文档
+        doc_bytes = base64.b64decode(request.document_base64)
+        doc = Document(io.BytesIO(doc_bytes))
+        
+        # 获取昨天日期和天气
+        yesterday = get_yesterday_date()
+        weather_data = get_pakbeng_weather(yesterday)
+        
+        # 格式化数据
+        date_text = format_date_cn(yesterday)
+        weather_text = f"天气：{weather_data['weather_cn']}"
+        temp_text = f"气温：{weather_data['temp_min']}℃~{weather_data['temp_max']}℃"
+        
+        # 只更新第1行的特定单元格
+        if doc.tables:
+            table = doc.tables[0]
+            if len(table.rows) > 0:
+                first_row = table.rows[0]
+                
+                # 第1行第1列：日期
+                if len(first_row.cells) > 0:
+                    cell = first_row.cells[0]
+                    cell.text = ""
+                    para = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = para.add_run(date_text)
+                    run.font.name = 'Times New Roman'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                    run.font.size = Pt(12)
+                
+                # 第1行第2列：天气和气温（合并单元格）
+                if len(first_row.cells) > 1:
+                    cell = first_row.cells[1]
+                    cell.text = ""
+                    para = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    
+                    # 添加天气
+                    run = para.add_run(weather_text)
+                    run.font.name = 'Times New Roman'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                    run.font.size = Pt(12)
+                    
+                    # 添加分隔符
+                    run = para.add_run("  ")
+                    
+                    # 添加气温
+                    run = para.add_run(temp_text)
+                    run.font.name = 'Times New Roman'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                    run.font.size = Pt(12)
+        
+        # 保存文档
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        
+        return UpdateDateWeatherResponse(
+            success=True,
+            message="日期天气更新成功",
+            document_base64=base64.b64encode(buffer.read()).decode('utf-8')
+        )
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return UpdateDateWeatherResponse(
+            success=False,
+            message=f"更新失败: {str(e)}"
+        )
 
 
 @app.post("/fill-template", response_model=FillTemplateResponse)
