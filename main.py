@@ -1240,6 +1240,8 @@ class FillTemplateRequest(BaseModel):
     row_index: int = 4  # 目标行索引（从0开始，第5行=4）
     col_index: int = 2  # 目标列索引（从0开始，第3列=2）
     update_date_weather: bool = True  # 是否更新日期和天气
+    upload_to_feishu: bool = False  # 是否上传到飞书
+    feishu_token: Optional[str] = None  # 飞书access_token
 
 
 class FillTemplateResponse(BaseModel):
@@ -1248,6 +1250,47 @@ class FillTemplateResponse(BaseModel):
     message: str
     document_base64: Optional[str] = None
     filename: str = "施工日报.docx"
+    file_key: Optional[str] = None  # 飞书file_key
+
+
+async def upload_to_feishu_files(document_bytes: bytes, filename: str, token: str) -> dict:
+    """上传文件到飞书"""
+    import httpx
+    
+    url = "https://open.feishu.cn/open-apis/im/v1/files"
+    
+    # 构建multipart/form-data
+    files = {
+        'file_type': (None, 'stream'),
+        'file_name': (None, filename),
+        'file': (filename, document_bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    }
+    
+    headers = {
+        'Authorization': f'Bearer {token}'
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, files=files, headers=headers)
+            result = response.json()
+            
+            if result.get("code") == 0:
+                return {
+                    "success": True,
+                    "file_key": result.get("data", {}).get("file_key", "")
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("msg", "上传失败")
+                }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"上传异常: {str(e)}"
+        }
+
 
 
 @app.post("/fill-template", response_model=FillTemplateResponse)
@@ -1342,16 +1385,34 @@ async def fill_template(request: FillTemplateRequest):
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
+        document_bytes = buffer.read()
         
         # 生成文件名
         date_str = datetime.now().strftime("%Y%m%d")
         filename = f"施工日报_{date_str}.docx"
         
+        # 如果需要上传到飞书
+        file_key = None
+        if request.upload_to_feishu and request.feishu_token:
+            upload_result = await upload_to_feishu_files(document_bytes, filename, request.feishu_token)
+            if upload_result.get("success"):
+                file_key = upload_result.get("file_key")
+            else:
+                # 上传失败，返回错误但仍提供Base64
+                return FillTemplateResponse(
+                    success=False,
+                    message=f"文档生成成功，但上传飞书失败: {upload_result.get('error')}",
+                    document_base64=base64.b64encode(document_bytes).decode('utf-8'),
+                    filename=filename,
+                    file_key=None
+                )
+        
         return FillTemplateResponse(
             success=True,
-            message="模板填充成功",
-            document_base64=base64.b64encode(buffer.read()).decode('utf-8'),
-            filename=filename
+            message="模板填充成功" + (" 并已上传到飞书" if file_key else ""),
+            document_base64=base64.b64encode(document_bytes).decode('utf-8'),
+            filename=filename,
+            file_key=file_key
         )
     
     except Exception as e:
