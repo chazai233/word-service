@@ -1389,12 +1389,12 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
         doc_bytes = base64.b64decode(request.document_base64)
         doc = Document(io.BytesIO(doc_bytes))
         
-        # 获取昨天日期和天气
-        yesterday = get_yesterday_date()
-        weather_data = get_pakbeng_weather(yesterday)
+        # 获取当天日期和天气（不是昨天）
+        today = datetime.now()
+        weather_data = get_pakbeng_weather(today)
         
         # 格式化数据
-        date_text = format_date_cn(yesterday)
+        date_text = format_date_cn(today)
         weather_text = f"天气：{weather_data['weather_cn']}"
         temp_text = f"气温：{weather_data['temp_min']}℃~{weather_data['temp_max']}℃"
         
