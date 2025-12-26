@@ -1292,6 +1292,78 @@ async def upload_to_feishu_files(document_bytes: bytes, filename: str, token: st
         }
 
 
+def format_line_with_bold_keywords(paragraph, line: str):
+    """
+    格式化一行文本，对关键词加粗
+    
+    关键词包括：
+    - 施工部位（1、2、3...）
+    - 人员投入、设备投入、累计投入、累计工程量、总共投入等
+    """
+    # 定义需要加粗的关键词模式
+    bold_keywords = [
+        '人员投入：', '设备投入：', '累计投入：', '累计工程量：', '总共投入：',
+        '人员到位情况：', '施工质量、安全生产、文明施工情况：', '机械设备运行情况：'
+    ]
+    
+    # 检查是否是施工部位行（如：1、右岸引航道）
+    import re
+    is_construction_site = re.match(r'^(\d+、[^：]+：)', line)
+    
+    if is_construction_site or any(keyword in line for keyword in bold_keywords):
+        # 需要部分加粗
+        remaining = line
+        
+        # 处理施工部位（如：1、右岸引航道（施工第7天）：）
+        if is_construction_site:
+            match = re.match(r'^(\d+、[^：]+：)', line)
+            if match:
+                bold_part = match.group(1)
+                remaining = line[len(bold_part):]
+                
+                # 添加加粗部分
+                run = paragraph.add_run(bold_part)
+                run.font.name = 'Times New Roman'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                run.font.size = Pt(10.5)  # 五号
+                run.font.bold = True
+        
+        # 处理关键词加粗
+        for keyword in bold_keywords:
+            if keyword in remaining:
+                parts = remaining.split(keyword, 1)
+                
+                # 添加关键词前的普通文本
+                if parts[0]:
+                    run = paragraph.add_run(parts[0])
+                    run.font.name = 'Times New Roman'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                    run.font.size = Pt(10.5)
+                
+                # 添加加粗的关键词
+                run = paragraph.add_run(keyword)
+                run.font.name = 'Times New Roman'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                run.font.size = Pt(10.5)
+                run.font.bold = True
+                
+                # 继续处理剩余部分
+                remaining = parts[1] if len(parts) > 1 else ''
+                break
+        
+        # 添加剩余的普通文本
+        if remaining:
+            run = paragraph.add_run(remaining)
+            run.font.name = 'Times New Roman'
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+            run.font.size = Pt(10.5)
+    else:
+        # 普通行，不加粗
+        run = paragraph.add_run(line)
+        run.font.name = 'Times New Roman'
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+        run.font.size = Pt(10.5)
+
 
 @app.post("/fill-template", response_model=FillTemplateResponse)
 async def fill_template(request: FillTemplateRequest):
@@ -1338,40 +1410,19 @@ async def fill_template(request: FillTemplateRequest):
         cell = row.cells[request.col_index]
         
         # 清空单元格并填入内容
-        if cell.paragraphs:
-            # 清空所有现有段落的内容
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    run.text = ""
-            
-            # 处理换行符，将内容分成多个段落
-            lines = request.content.split('\n')
-            
-            # 第一行填入第一个段落
-            if lines:
-                first_para = cell.paragraphs[0]
-                first_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                run = first_para.add_run(lines[0])
-                run.font.name = 'Times New Roman'
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                run.font.size = Pt(12)
-            
-            # 后续行添加新段落
-            for line in lines[1:]:
-                new_para = cell.add_paragraph()
-                new_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                run = new_para.add_run(line)
-                run.font.name = 'Times New Roman'
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                run.font.size = Pt(12)
-        else:
-            para = cell.add_paragraph()
-            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            for line in request.content.split('\n'):
-                run = para.add_run(line + '\n')
-                run.font.name = 'Times New Roman'
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                run.font.size = Pt(12)
+        # 完全清空单元格：删除所有段落的元素
+        cell._element.clear_content()
+        
+        # 处理换行符，将内容分成多个段落
+        lines = request.content.split('\n')
+        
+        # 添加所有行作为段落，使用智能格式化
+        for line in lines:
+            if line.strip():  # 只添加非空行
+                para = cell.add_paragraph()
+                para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                # 使用格式化函数处理这一行
+                format_line_with_bold_keywords(para, line)
         
         # 更新日期和天气
         if request.update_date_weather:
