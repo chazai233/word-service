@@ -1230,7 +1230,141 @@ async def generate_from_template(request: TemplateGenerateRequest):
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
+# ==================== 模板填充接口 ====================
+
+class FillTemplateRequest(BaseModel):
+    """模板填充请求"""
+    template_base64: str  # Base64 编码的模板文件
+    content: str  # 要填入的文本内容
+    table_index: int = 0  # 目标表格索引（从0开始）
+    row_index: int = 4  # 目标行索引（从0开始，第5行=4）
+    col_index: int = 2  # 目标列索引（从0开始，第3列=2）
+    update_date_weather: bool = True  # 是否更新日期和天气
+
+
+class FillTemplateResponse(BaseModel):
+    """模板填充响应"""
+    success: bool
+    message: str
+    document_base64: Optional[str] = None
+    filename: str = "施工日报.docx"
+
+
+@app.post("/fill-template", response_model=FillTemplateResponse)
+async def fill_template(request: FillTemplateRequest):
+    """
+    填充Word模板的指定单元格
+    
+    - template_base64: Base64编码的Word模板
+    - content: 要填入的文本内容（支持换行符）
+    - table_index: 目标表格索引（默认0=第一个表格）
+    - row_index: 目标行索引（默认4=第5行）
+    - col_index: 目标列索引（默认2=第3列）
+    - update_date_weather: 是否自动更新日期和天气（默认True）
+    """
+    try:
+        # 解码模板
+        template_bytes = base64.b64decode(request.template_base64)
+        doc = Document(io.BytesIO(template_bytes))
+        
+        # 检查表格是否存在
+        if len(doc.tables) <= request.table_index:
+            return FillTemplateResponse(
+                success=False,
+                message=f"模板中没有第 {request.table_index + 1} 个表格（共 {len(doc.tables)} 个表格）"
+            )
+        
+        table = doc.tables[request.table_index]
+        
+        # 检查行是否存在
+        if len(table.rows) <= request.row_index:
+            return FillTemplateResponse(
+                success=False,
+                message=f"表格第 {request.table_index + 1} 没有第 {request.row_index + 1} 行（共 {len(table.rows)} 行）"
+            )
+        
+        row = table.rows[request.row_index]
+        
+        # 检查列是否存在
+        if len(row.cells) <= request.col_index:
+            return FillTemplateResponse(
+                success=False,
+                message=f"行 {request.row_index + 1} 没有第 {request.col_index + 1} 列（共 {len(row.cells)} 列）"
+            )
+        
+        cell = row.cells[request.col_index]
+        
+        # 清空单元格并填入内容
+        if cell.paragraphs:
+            # 清空所有现有段落的内容
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.text = ""
+            
+            # 处理换行符，将内容分成多个段落
+            lines = request.content.split('\n')
+            
+            # 第一行填入第一个段落
+            if lines:
+                first_para = cell.paragraphs[0]
+                first_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                run = first_para.add_run(lines[0])
+                run.font.name = 'Times New Roman'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                run.font.size = Pt(12)
+            
+            # 后续行添加新段落
+            for line in lines[1:]:
+                new_para = cell.add_paragraph()
+                new_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                run = new_para.add_run(line)
+                run.font.name = 'Times New Roman'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                run.font.size = Pt(12)
+        else:
+            para = cell.add_paragraph()
+            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            for line in request.content.split('\n'):
+                run = para.add_run(line + '\n')
+                run.font.name = 'Times New Roman'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                run.font.size = Pt(12)
+        
+        # 更新日期和天气
+        if request.update_date_weather:
+            yesterday = get_yesterday_date()
+            weather_data = get_pakbeng_weather(yesterday)
+            update_document_date_weather(doc, is_english=False, 
+                                         weather_data=weather_data, 
+                                         yesterday=yesterday)
+        
+        # 保存文档
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        
+        # 生成文件名
+        date_str = datetime.now().strftime("%Y%m%d")
+        filename = f"施工日报_{date_str}.docx"
+        
+        return FillTemplateResponse(
+            success=True,
+            message="模板填充成功",
+            document_base64=base64.b64encode(buffer.read()).decode('utf-8'),
+            filename=filename
+        )
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return FillTemplateResponse(
+            success=False,
+            message=f"填充失败: {str(e)}"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
