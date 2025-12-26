@@ -1456,9 +1456,9 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
         if request.feishu_token:
             try:
                 upload_result = await upload_to_feishu_files(
-                    doc_bytes=doc_bytes,
+                    document_bytes=doc_bytes,
                     filename="施工日报.docx",
-                    feishu_token=request.feishu_token
+                    token=request.feishu_token
                 )
                 
                 if upload_result["success"]:
