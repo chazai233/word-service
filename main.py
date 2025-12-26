@@ -1398,6 +1398,7 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
         weather_text = f"天气：{weather_data['weather_cn']}"
         temp_text = f"气温：{weather_data['temp_min']}℃~{weather_data['temp_max']}℃"
         
+        
         # 只更新第1行的特定单元格
         if doc.tables:
             table = doc.tables[0]
@@ -1407,19 +1408,23 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
                 # 第1行第1列：日期
                 if len(first_row.cells) > 0:
                     cell = first_row.cells[0]
-                    cell.text = ""
-                    para = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+                    # 完全清空单元格
+                    cell._element.clear_content()
+                    
+                    para = cell.add_paragraph()
                     para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run = para.add_run(date_text)
                     run.font.name = 'Times New Roman'
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
                     run.font.size = Pt(12)
                 
-                # 第1行第2列：天气和气温（合并单元格）
+                # 第1行第2列：天气和气温（合并单元格，跨第2-4列）
                 if len(first_row.cells) > 1:
                     cell = first_row.cells[1]
-                    cell.text = ""
-                    para = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+                    # 完全清空单元格
+                    cell._element.clear_content()
+                    
+                    para = cell.add_paragraph()
                     para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     
                     # 添加天气
