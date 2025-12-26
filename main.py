@@ -1420,9 +1420,9 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
                     run.font.size = Pt(12)
                 
-                # 第1行第2列：天气和气温（合并单元格，跨第2-4列）
-                if len(first_row.cells) > 1:
-                    cell = first_row.cells[1]
+                # 第1行第4列（索引3）：天气和气温（合并单元格，跨第4-7列）
+                if len(first_row.cells) > 3:
+                    cell = first_row.cells[3]
                     # 完全清空单元格
                     cell._element.clear_content()
                     
