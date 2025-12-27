@@ -1379,6 +1379,21 @@ class UpdateDateWeatherResponse(BaseModel):
     file_key: Optional[str] = None  # 飞书文件key（如果重新上传）
 
 
+class UpdatePersonnelRequest(BaseModel):
+    """更新人员统计请求"""
+    document_base64: str  # Base64 编码的文档
+    personnel_text: str  # 统计后的人员信息文本
+    feishu_token: Optional[str] = None  # 飞书access_token
+
+
+class UpdatePersonnelResponse(BaseModel):
+    """更新人员统计响应"""
+    success: bool
+    message: str
+    document_base64: Optional[str] = None
+    file_key: Optional[str] = None
+
+
 @app.post("/update-date-weather", response_model=UpdateDateWeatherResponse)
 async def update_date_weather_only(request: UpdateDateWeatherRequest):
     """
@@ -1499,7 +1514,92 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
         traceback.print_exc()
         return UpdateDateWeatherResponse(
             success=False,
-            message=f"更新失败: {str(e)}"
+            message=str(e)
+        )
+
+
+@app.post("/update-personnel-stats", response_model=UpdatePersonnelResponse)
+async def update_personnel_stats(request: UpdatePersonnelRequest):
+    """
+    更新第6行的人员统计信息
+    """
+    try:
+        # 解码文档
+        doc_bytes = base64.b64decode(request.document_base64)
+        doc = Document(io.BytesIO(doc_bytes))
+        
+        # 只更新第1个表格的第6行（索引5）
+        if doc.tables:
+            table = doc.tables[0]
+            if len(table.rows) > 5:
+                row = table.rows[5]
+                # 第3列（索引2）是我们要写入的合并单元格的起点
+                if len(row.cells) > 2:
+                    cell = row.cells[2]
+                    # 完全清空单元格
+                    cell._element.clear_content()
+                    
+                    # 写入新内容
+                    lines = request.personnel_text.split('\n')
+                    for line in lines:
+                        if line.strip():
+                            para = cell.add_paragraph()
+                            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                            run = para.add_run(line.strip())
+                            run.font.name = 'Times New Roman'
+                            run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                            run.font.size = Pt(10.5)
+        
+        # 保存文档
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        doc_bytes = buffer.read()
+        doc_base64 = base64.b64encode(doc_bytes).decode('utf-8')
+        
+        # 重新上传到飞书
+        file_key = None
+        if request.feishu_token:
+            try:
+                upload_result = await upload_to_feishu_files(
+                    document_bytes=doc_bytes,
+                    filename="施工日报_带统计.docx",
+                    token=request.feishu_token
+                )
+                
+                if upload_result["success"]:
+                    file_key = upload_result["file_key"]
+                    return UpdatePersonnelResponse(
+                        success=True,
+                        message="人员统计更新并上传成功",
+                        document_base64=doc_base64,
+                        file_key=file_key
+                    )
+                else:
+                    return UpdatePersonnelResponse(
+                        success=True,
+                        message=f"人员统计更新成功，但上传失败: {upload_result.get('error')}",
+                        document_base64=doc_base64
+                    )
+            except Exception as e:
+                return UpdatePersonnelResponse(
+                    success=True,
+                    message=f"人员统计更新成功，但上传异常: {str(e)}",
+                    document_base64=doc_base64
+                )
+        
+        return UpdatePersonnelResponse(
+            success=True,
+            message="人员统计更新成功",
+            document_base64=doc_base64
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return UpdatePersonnelResponse(
+            success=False,
+            message=f"处理失败: {str(e)}"
         )
 
 
