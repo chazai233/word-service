@@ -1418,7 +1418,7 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
                     run = para.add_run(date_text)
                     run.font.name = 'Times New Roman'
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                    run.font.size = Pt(12)
+                    run.font.size = Pt(10.5)
                 
                 # 第1行第4列（索引3）：天气和气温（合并单元格，跨第4-7列）
                 if len(first_row.cells) > 3:
@@ -1433,7 +1433,7 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
                     run = para.add_run(weather_text)
                     run.font.name = 'Times New Roman'
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                    run.font.size = Pt(12)
+                    run.font.size = Pt(10.5)
                     
                     # 添加分隔符
                     run = para.add_run("  ")
@@ -1442,7 +1442,7 @@ async def update_date_weather_only(request: UpdateDateWeatherRequest):
                     run = para.add_run(temp_text)
                     run.font.name = 'Times New Roman'
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                    run.font.size = Pt(12)
+                    run.font.size = Pt(10.5)
         
         # 保存文档
         buffer = io.BytesIO()
