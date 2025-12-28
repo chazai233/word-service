@@ -123,6 +123,31 @@ def get_pakbeng_weather(date: datetime = None) -> Dict:
         "success": True
     }
 
+# ---------------- 核心功能：字体设置辅助函数 (新增) ----------------
+
+def set_cell_text(cell, text):
+    """
+    设置单元格文本，并应用：
+    1. 中文：宋体
+    2. 英文/数字：Times New Roman
+    3. 字号：五号 (10.5pt)
+    """
+    # 清空单元格原有内容
+    cell.text = ""
+    # 获取或创建第一个段落
+    p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+    
+    # 创建一个 run
+    run = p.add_run(text)
+    
+    # 设置西文字体 (Times New Roman)
+    run.font.name = 'Times New Roman'
+    # 设置中文字体 (宋体) - 需要通过 XML 设置
+    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+    
+    # 设置字号为五号 (10.5磅)
+    run.font.size = Pt(10.5)
+
 # ---------------- 核心功能：首行缩进 ----------------
 
 def apply_smart_indentation(doc: Document):
@@ -145,9 +170,7 @@ def apply_smart_indentation(doc: Document):
                 p_fmt.first_line_indent = indent_size
                 break
                 
-    # 同时也遍历表格中的段落? 
-    # 通常日报正文是在一个大单元格里。我们需要进入那个单元格。
-    # 为了保险，遍历第一个表格的所有单元格
+    # 同时也遍历表格中的段落
     if doc.tables:
         for row in doc.tables[0].rows:
             for cell in row.cells:
@@ -167,19 +190,13 @@ def find_target_table(doc: Document, index: int, header_hint: str) -> Optional[A
     # 优先使用索引
     if 0 <= index < len(doc.tables):
         return doc.tables[index]
-    
-    # 如果索引不对，尝试通过标题查找 (这里的逻辑比较复杂，暂略，依赖前端传准 index)
     return None
 
 def update_table_row(table, row_name: str, today: str, total: str):
     """
     更新表格中的行
-    逻辑：查找第2列(Index 1)包含 row_name 的行
-    填入：第5列(Index 4) -> Today, 第6列(Index 5) -> Total
-    (注意：列索引需根据模板实际情况调整，假设是 Col 1=项目名, Col 4=今日, Col 5=累计)
     """
     # 1. 确定列索引
-    # 扫描表头
     name_col = -1
     today_col = -1
     total_col = -1
@@ -194,8 +211,6 @@ def update_table_row(table, row_name: str, today: str, total: str):
         elif "今日" in h or "日完成" in h: today_col = i
         elif "累计" in h: total_col = i
         
-    # 如果找不到表头，使用默认值 (根据用户截图: No, Name, Unit, Plan, Today, Total, Remark)
-    # -> Name=1, Today=4, Total=5
     if name_col == -1: name_col = 1
     if today_col == -1: today_col = 4
     if total_col == -1: total_col = 5
@@ -208,10 +223,6 @@ def update_table_row(table, row_name: str, today: str, total: str):
         
         # 模糊匹配
         if row_name in cell_name:
-            # 找到目标行，填入数据
-            # 注意：不覆盖原有格式，只修改文本
-            
-            # Helper to set text while keeping style
             def safe_set_text(cell, text):
                 item = cell.paragraphs[0]
                 if item.runs:
@@ -225,7 +236,7 @@ def update_table_row(table, row_name: str, today: str, total: str):
             if total and total != "-":
                 safe_set_text(row.cells[total_col], total)
             
-            return # 每张表只匹配一次? 或者继续匹配? 假设唯一
+            return
 
 # ---------------- API 端点 ----------------
 
@@ -244,11 +255,7 @@ async def fill_template(req: FillTemplateRequest):
             table = doc.tables[req.table_index]
             if len(table.rows) > req.row_index and len(table.rows[req.row_index].cells) > req.col_index:
                 cell = table.cell(req.row_index, req.col_index)
-                cell.text = req.content # 这里会清除原有格式?
-                # 更好的方式是追加 P，或者替换 text
-                # 简单处理：重置文本
-                
-                # 3. 应用首行缩进
+                cell.text = req.content
                 apply_smart_indentation(doc)
         
         # 4. 保存
@@ -287,7 +294,6 @@ async def update_appendix_tables(req: UpdateAppendixRequest):
         out_bytes = out_stream.getvalue()
         b64_str = base64.b64encode(out_bytes).decode('utf-8')
         
-        # 4. 这里的逻辑可以整合飞书上传，暂时只返回 base64
         return {
             "success": True,
             "document_base64": b64_str
@@ -296,7 +302,7 @@ async def update_appendix_tables(req: UpdateAppendixRequest):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-# ---------------- 新增：缺失的日期天气接口 (已修正坐标) ----------------
+# ---------------- 更新日期天气接口 (已添加字体样式) ----------------
 
 class UpdateDateWeatherRequest(BaseModel):
     document_base64: str
@@ -309,34 +315,36 @@ async def update_date_weather(req: UpdateDateWeatherRequest):
         file_bytes = base64.b64decode(req.document_base64)
         doc = Document(io.BytesIO(file_bytes))
         
-        # 2. 获取当前日期和天气 (调用你已有的辅助函数)
+        # 2. 获取当前日期和天气
         now = datetime.now()
         date_str = format_date_cn(now)
-        weather_info = get_pakbeng_weather() # 使用你代码里定义的帕克宾天气
-        weather_str = f"{weather_info['weather_cn']} {weather_info['temp_min']}℃-{weather_info['temp_max']}℃"
+        weather_info = get_pakbeng_weather()
+        
+        # --- 关键修改：按你的要求格式化天气字符串 ---
+        # 格式：天气：晴                气温：15℃~25℃
+        # 注意：这里加了长空格，且连接符改为 ~
+        weather_str = f"天气：{weather_info['weather_cn']}                气温：{weather_info['temp_min']}℃~{weather_info['temp_max']}℃"
         
         # 3. 写入表格 
         if doc.tables:
             table = doc.tables[0]
             try:
-                # 修正后的逻辑：检查第一行 (row 0)
                 if len(table.rows) > 0:
                     row_cells = table.rows[0].cells
                     
-                    # 填入日期：第一行第一列 (索引 0)
+                    # 填入日期：第一行第一列
                     if len(row_cells) > 0:
-                        row_cells[0].text = date_str
+                        # 使用辅助函数设置字体和字号
+                        set_cell_text(row_cells[0], date_str)
                     
-                    # 填入天气：第一行第四列 (索引 3)
-                    # 增加智能容错：如果因为合并单元格导致列数不够，则填入该行最后一列
+                    # 填入天气：第一行第四列 (或最后一列)
                     if len(row_cells) > 3:
-                        row_cells[3].text = weather_str
+                        set_cell_text(row_cells[3], weather_str)
                     elif len(row_cells) > 1:
-                        # 只有2列或3列的情况（可能是合并单元格），填入最后一列
-                        row_cells[-1].text = weather_str
+                        set_cell_text(row_cells[-1], weather_str)
                         
             except Exception as table_e:
-                print(f"Warning: Table update skipped due to layout mismatch: {table_e}")
+                print(f"Warning: Table update skipped: {table_e}")
 
         # 4. 保存并返回
         out_stream = io.BytesIO()
@@ -357,11 +365,6 @@ async def update_date_weather(req: UpdateDateWeatherRequest):
 @app.post("/update-personnel-stats")
 async def update_personnel_stats(req: UpdatePersonnelRequest):
     try:
-        # 1. 解码文档 (如果有处理逻辑可以在这里添加)
-        # 目前仅仅作为 Pass-through 防止 404
-        # 未来：这里可以解析 personnel_text 并填入某个特定表格
-        
-        # 2. 返回原文档 (或修改后的文档)
         return {
             "success": True,
             "document_base64": req.document_base64,
