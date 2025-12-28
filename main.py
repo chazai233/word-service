@@ -1,6 +1,8 @@
 """
-Word Document Generation Service for Dify (Ultimate Version)
-适配：多区域人员统计、多区域累计工程量、复杂格式排版
+Word Document Generation Service for Dify (Ultimate Version - Format Fixed)
+修复：
+1. "人员投入"、"累计工程量"、"设备投入" 强制加粗。
+2. 上述行 + 以 (1)/(2) 开头的具体内容行，强制首行缩进 2 字符。
 """
 
 import base64
@@ -19,7 +21,7 @@ from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-app = FastAPI(title="Word Service Ultimate", version="6.0.0")
+app = FastAPI(title="Word Service Ultimate", version="7.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,17 +31,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- 辅助函数：排版核心 ----------------
+# ---------------- 辅助函数：格式核心 ----------------
 
 def set_cell_text(cell, text, bold=False):
     """
-    设置单元格文本，保留格式：
-    1. 中文：宋体
-    2. 英文/数字：Times New Roman
-    3. 字号：五号 (10.5pt)
-    4. bold: 是否加粗
+    设置单元格文本，保留基础字体格式
     """
-    cell.text = "" # 清空原有内容
+    cell.text = "" 
     p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
     
     run = p.add_run(str(text))
@@ -49,48 +47,50 @@ def set_cell_text(cell, text, bold=False):
     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
     run.font.size = Pt(10.5)
     
-    # 加粗设置
     if bold:
         run.bold = True
 
 def apply_smart_indentation(doc: Document):
     """
-    智能首行缩进
-    逻辑：只要这一行看起来像是正文（不是极短的标题），且前面有序号，就缩进。
+    智能首行缩进逻辑（精准匹配用户要求）
     """
-    indent_size = Pt(24) # 2字符
+    # 2字符缩进 (小四/五号字通常 24pt 左右视作2字符)
+    indent_size = Pt(24) 
+    
+    # 需要缩进的特定关键词
+    target_keywords = ["人员投入", "设备投入", "累计工程量", "人员：", "设备：", "累计："]
     
     def process_paragraph(p):
         text = p.text.strip()
-        # 排除空行
         if not text: return
         
-        # 排除明显的短标题 (比如 "1、右岸施工营地")，通常标题不缩进，或者已经加粗了
-        # 这里策略是：只要包含特定的关键词，或者看起来像描述性段落，就缩进
-        
-        # 关键词匹配
-        keywords = ["人员投入", "设备投入", "累计工程量", "人员：", "设备：", "累计："]
         should_indent = False
         
-        # 1. 命中关键词
-        for kw in keywords:
+        # 规则1：包含特定关键词的行 -> 缩进
+        for kw in target_keywords:
             if kw in text:
                 should_indent = True
                 break
         
-        # 2. 或者以 (1), (2) 开头的长段落
-        if re.match(r"^\(\d+\)", text) and len(text) > 20:
-             should_indent = True
+        # 规则2：以 (数字) 或 （数字） 开头的行 -> 缩进
+        # 匹配 (1), (2), （1）, （2）
+        if re.match(r"^[\(（]\d+[\)）]", text):
+            should_indent = True
 
+        # 执行缩进
         if should_indent:
             p.paragraph_format.first_line_indent = indent_size
 
-    # 遍历表格内容 (日报的主要内容都在表格里)
+    # 1. 遍历表格内容 (日报主要内容在表格)
     if doc.tables:
         for row in doc.tables[0].rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
                     process_paragraph(p)
+                    
+    # 2. 遍历文档正文 (防止有人写在表格外)
+    for p in doc.paragraphs:
+        process_paragraph(p)
 
 def find_target_table(doc: Document, index: int) -> Optional[Any]:
     if 0 <= index < len(doc.tables):
@@ -101,7 +101,6 @@ def update_table_row(table, row_name: str, today: str, total: str):
     """表格行更新逻辑"""
     if not table.rows: return
     
-    # 列索引推断
     name_col = 1
     cols_count = len(table.rows[0].cells)
     today_col = 4 if cols_count > 4 else cols_count - 2
@@ -112,7 +111,6 @@ def update_table_row(table, row_name: str, today: str, total: str):
         
         cell_text = row.cells[name_col].text.strip()
         
-        # 模糊匹配：只要 AI 提取的名字(row_name) 在表格这一行(cell_text) 里出现即可
         if row_name in cell_text: 
             if today and today != "-":
                 set_cell_text(row.cells[today_col], today)
@@ -152,7 +150,7 @@ class UpdateAppendixRequest(BaseModel):
     data: List[AppendixTableData]
     feishu_token: Optional[str] = None
 
-# ---------------- API 接口 ----------------
+# ---------------- API 接口实现 ----------------
 
 @app.post("/fill-template")
 async def fill_template(req: FillTemplateRequest):
@@ -165,7 +163,7 @@ async def fill_template(req: FillTemplateRequest):
             if len(table.rows) > req.row_index:
                 cell = table.cell(req.row_index, req.col_index)
                 
-                # --- 写入主内容 ---
+                # --- 重写写入逻辑：逐行控制格式 ---
                 cell.text = "" 
                 p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
                 
@@ -174,21 +172,27 @@ async def fill_template(req: FillTemplateRequest):
                     line = line.strip()
                     if not line: continue
                     
-                    # 识别标题：以冒号结尾，或包含"施工第"
-                    # 你的截图显示：1、xxx (施工第xx天)：
-                    is_title = ("：" in line or ":" in line) and ("施工第" in line)
+                    # 1. 判定是否需要【加粗】
+                    # 条件A: 大标题（包含“施工第”或以冒号结尾）
+                    is_main_title = ("：" in line or ":" in line) and ("施工第" in line)
+                    # 条件B: 关键统计项（包含“人员投入”、“累计工程量”、“设备投入”）
+                    is_sub_title = any(kw in line for kw in ["人员投入", "累计工程量", "设备投入"])
                     
+                    should_bold = is_main_title or is_sub_title
+                    
+                    # 写入文本
                     run = p.add_run(line + "\n")
                     
-                    # 字体
+                    # 统一字体设置
                     run.font.name = 'Times New Roman'
                     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
                     run.font.size = Pt(10.5)
                     
-                    if is_title:
+                    # 应用加粗
+                    if should_bold:
                         run.bold = True
                 
-                # --- 应用缩进 ---
+                # --- 应用缩进 (调用增强版函数) ---
                 apply_smart_indentation(doc)
         
         out = io.BytesIO()
@@ -228,18 +232,14 @@ async def update_personnel_stats(req: UpdatePersonnelRequest):
         file_bytes = base64.b64decode(req.document_base64)
         doc = Document(io.BytesIO(file_bytes))
         
-        # 追加人员统计信息到文档末尾（或者你可以指定填入主表格的某一行）
-        # 这里演示为：追加在正文下方
-        if doc.tables:
-             # 尝试追加到第一个表格的最后一个单元格（通常是备注或者正文格）
-             # 如果你的正文格是 row=4, col=2，我们也可以追加到那里
-             table = doc.tables[0]
-             # 这里简单起见，追加到文档最后
-             p = doc.add_paragraph()
-             run = p.add_run("\n" + req.personnel_text)
-             run.font.name = 'Times New Roman'
-             run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-             run.font.size = Pt(10.5)
+        # 统计信息追加在最后，也应用字体规范
+        p = doc.add_paragraph()
+        run = p.add_run("\n" + req.personnel_text)
+        run.font.name = 'Times New Roman'
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+        run.font.size = Pt(10.5)
+        # 统计信息一般不需要首行缩进，或者你可以选择缩进
+        # p.paragraph_format.first_line_indent = Pt(24) 
         
         out = io.BytesIO()
         doc.save(out)
