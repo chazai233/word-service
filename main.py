@@ -1,8 +1,9 @@
 """
-Word Document Generation Service for Dify (Ultimate Version - Format Fixed)
-修复：
-1. "人员投入"、"累计工程量"、"设备投入" 强制加粗。
-2. 上述行 + 以 (1)/(2) 开头的具体内容行，强制首行缩进 2 字符。
+Word Document Generation Service - Precision Formatting Version (v8.0)
+修复重点：
+1. 消除大标题(1、)的错误缩进。
+2. 实现"人员投入"等关键词的【局部加粗】（而非整行）。
+3. 严格控制子标题((1))和统计项的首行缩进。
 """
 
 import base64
@@ -21,7 +22,7 @@ from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-app = FastAPI(title="Word Service Ultimate", version="7.0.0")
+app = FastAPI(title="Word Service Precision", version="8.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,66 +32,93 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------- 辅助函数：格式核心 ----------------
+# ---------------- 核心排版逻辑 ----------------
 
-def set_cell_text(cell, text, bold=False):
-    """
-    设置单元格文本，保留基础字体格式
-    """
-    cell.text = "" 
-    p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
-    
-    run = p.add_run(str(text))
-    
-    # 字体设置
+def format_run_font(run, size=10.5, bold=False):
+    """统一设置字体格式"""
     run.font.name = 'Times New Roman'
     run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-    run.font.size = Pt(10.5)
-    
-    if bold:
-        run.bold = True
+    run.font.size = Pt(size)
+    run.bold = bold
 
-def apply_smart_indentation(doc: Document):
+def process_and_add_line(cell, line_text):
     """
-    智能首行缩进逻辑（精准匹配用户要求）
+    智能处理每一行的格式：缩进、加粗、分割
     """
-    # 2字符缩进 (小四/五号字通常 24pt 左右视作2字符)
-    indent_size = Pt(24) 
-    
-    # 需要缩进的特定关键词
-    target_keywords = ["人员投入", "设备投入", "累计工程量", "人员：", "设备：", "累计："]
-    
-    def process_paragraph(p):
-        text = p.text.strip()
-        if not text: return
-        
-        should_indent = False
-        
-        # 规则1：包含特定关键词的行 -> 缩进
-        for kw in target_keywords:
-            if kw in text:
-                should_indent = True
-                break
-        
-        # 规则2：以 (数字) 或 （数字） 开头的行 -> 缩进
-        # 匹配 (1), (2), （1）, （2）
-        if re.match(r"^[\(（]\d+[\)）]", text):
-            should_indent = True
+    line_text = line_text.strip()
+    if not line_text: return
 
-        # 执行缩进
-        if should_indent:
-            p.paragraph_format.first_line_indent = indent_size
+    # 创建新段落（注意：不使用 add_run("\n") 而是 add_paragraph 以便单独控制每一行的缩进）
+    # 如果是单元格刚清空后的第一个段落，直接使用，否则新建
+    if len(cell.paragraphs) == 1 and not cell.paragraphs[0].text:
+        p = cell.paragraphs[0]
+    else:
+        p = cell.add_paragraph()
 
-    # 1. 遍历表格内容 (日报主要内容在表格)
-    if doc.tables:
-        for row in doc.tables[0].rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    process_paragraph(p)
-                    
-    # 2. 遍历文档正文 (防止有人写在表格外)
-    for p in doc.paragraphs:
-        process_paragraph(p)
+    # --- 1. 规则匹配 ---
+    
+    # 规则A：大标题 (例如 "1、右岸施工营地")
+    # 特征：数字开头 + 顿号或点
+    if re.match(r"^\d+[、\.]", line_text):
+        p.paragraph_format.first_line_indent = Pt(0) # 【关键】强制不缩进
+        run = p.add_run(line_text)
+        format_run_font(run, bold=True) # 大标题整行加粗
+        return
+
+    # 规则B：统计项 (例如 "人员投入：...")
+    # 特征：包含特定关键词
+    keywords = ["人员投入", "设备投入", "累计工程量"]
+    hit_keyword = None
+    for kw in keywords:
+        if kw in line_text:
+            hit_keyword = kw
+            break
+    
+    if hit_keyword:
+        p.paragraph_format.first_line_indent = Pt(24) # 【关键】强制缩进 2 字符
+        
+        # 【局部加粗逻辑】
+        # 将文本切分为两部分：关键词前缀(加粗) + 剩余内容(不加粗)
+        # 例如 "人员投入：张三" -> "人员投入：" (粗) + " 张三" (细)
+        
+        # 尝试找到冒号的位置
+        split_index = -1
+        if "：" in line_text:
+            split_index = line_text.index("：") + 1
+        elif ":" in line_text:
+            split_index = line_text.index(":") + 1
+        else:
+            # 如果没有冒号，就只加粗关键词本身
+            split_index = line_text.index(hit_keyword) + len(hit_keyword)
+            
+        prefix = line_text[:split_index]
+        content = line_text[split_index:]
+        
+        # 写入前缀（加粗）
+        run1 = p.add_run(prefix)
+        format_run_font(run1, bold=True)
+        
+        # 写入内容（正常）
+        run2 = p.add_run(content)
+        format_run_font(run2, bold=False)
+        return
+
+    # 规则C：子标题 / 具体内容 (例如 "(1) 场地精平")
+    # 特征：以 (数字) 或 （数字） 开头
+    if re.match(r"^[\(（]\d+[\)）]", line_text):
+        p.paragraph_format.first_line_indent = Pt(24) # 【关键】强制缩进 2 字符
+        run = p.add_run(line_text)
+        format_run_font(run, bold=False) # 内容不加粗
+        return
+
+    # 规则D：其他普通文本
+    # 默认缩进2字符（因为通常是正文延续），或者0？
+    # 根据你的截图，如果不符合上述规则，通常是正文描述，建议缩进2字符对齐
+    p.paragraph_format.first_line_indent = Pt(24)
+    run = p.add_run(line_text)
+    format_run_font(run, bold=False)
+
+# ---------------- 辅助函数 ----------------
 
 def find_target_table(doc: Document, index: int) -> Optional[Any]:
     if 0 <= index < len(doc.tables):
@@ -108,14 +136,19 @@ def update_table_row(table, row_name: str, today: str, total: str):
     
     for row in table.rows:
         if len(row.cells) <= max(name_col, today_col, total_col): continue
-        
         cell_text = row.cells[name_col].text.strip()
-        
         if row_name in cell_text: 
+            # 填入数字时也应用字体规范
             if today and today != "-":
-                set_cell_text(row.cells[today_col], today)
+                cell = row.cells[today_col]
+                cell.text = ""
+                run = cell.paragraphs[0].add_run(str(today))
+                format_run_font(run)
             if total and total != "-":
-                set_cell_text(row.cells[total_col], total)
+                cell = row.cells[total_col]
+                cell.text = ""
+                run = cell.paragraphs[0].add_run(str(total))
+                format_run_font(run)
             return
 
 # ---------------- 模型定义 ----------------
@@ -163,37 +196,13 @@ async def fill_template(req: FillTemplateRequest):
             if len(table.rows) > req.row_index:
                 cell = table.cell(req.row_index, req.col_index)
                 
-                # --- 重写写入逻辑：逐行控制格式 ---
+                # 清空单元格
                 cell.text = "" 
-                p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
                 
+                # 逐行处理，精确控制格式
                 lines = req.content.split('\n')
                 for line in lines:
-                    line = line.strip()
-                    if not line: continue
-                    
-                    # 1. 判定是否需要【加粗】
-                    # 条件A: 大标题（包含“施工第”或以冒号结尾）
-                    is_main_title = ("：" in line or ":" in line) and ("施工第" in line)
-                    # 条件B: 关键统计项（包含“人员投入”、“累计工程量”、“设备投入”）
-                    is_sub_title = any(kw in line for kw in ["人员投入", "累计工程量", "设备投入"])
-                    
-                    should_bold = is_main_title or is_sub_title
-                    
-                    # 写入文本
-                    run = p.add_run(line + "\n")
-                    
-                    # 统一字体设置
-                    run.font.name = 'Times New Roman'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-                    run.font.size = Pt(10.5)
-                    
-                    # 应用加粗
-                    if should_bold:
-                        run.bold = True
-                
-                # --- 应用缩进 (调用增强版函数) ---
-                apply_smart_indentation(doc)
+                    process_and_add_line(cell, line)
         
         out = io.BytesIO()
         doc.save(out)
@@ -217,8 +226,14 @@ async def update_date_weather(req: UpdateDateWeatherRequest):
             table = doc.tables[0]
             if len(table.rows) > 0:
                 cells = table.rows[0].cells
-                if len(cells) > 0: set_cell_text(cells[0], date_str)
-                if len(cells) > 1: set_cell_text(cells[-1], weather_str)
+                if len(cells) > 0: 
+                    cells[0].text = ""
+                    run = cells[0].paragraphs[0].add_run(date_str)
+                    format_run_font(run)
+                if len(cells) > 1: 
+                    cells[-1].text = ""
+                    run = cells[-1].paragraphs[0].add_run(weather_str)
+                    format_run_font(run)
         
         out = io.BytesIO()
         doc.save(out)
@@ -232,14 +247,10 @@ async def update_personnel_stats(req: UpdatePersonnelRequest):
         file_bytes = base64.b64decode(req.document_base64)
         doc = Document(io.BytesIO(file_bytes))
         
-        # 统计信息追加在最后，也应用字体规范
+        # 统计信息在文末追加，默认不需要特殊缩进，但需要字体规范
         p = doc.add_paragraph()
         run = p.add_run("\n" + req.personnel_text)
-        run.font.name = 'Times New Roman'
-        run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
-        run.font.size = Pt(10.5)
-        # 统计信息一般不需要首行缩进，或者你可以选择缩进
-        # p.paragraph_format.first_line_indent = Pt(24) 
+        format_run_font(run)
         
         out = io.BytesIO()
         doc.save(out)
