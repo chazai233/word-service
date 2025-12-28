@@ -319,15 +319,15 @@ async def update_date_weather(req: UpdateDateWeatherRequest):
         # 通常日报的表头在第一个表格
         if doc.tables:
             table = doc.tables[0]
-            # 示例：假设日期在第2行第2列(索引1,1)，天气在第2行第4列(索引1,3)
+            # 示例：假设日期在第1行第1列(索引0,0)，天气在第1行第4列(索引0,3)
             # 你需要根据你的 Word 模板实际格子位置修改下面的数字！
             try:
                 # 这是一个保护性写法，防止表格太小报错
                 if len(table.rows) > 1 and len(table.rows[1].cells) > 4:
                     # 填入日期
-                    table.cell(1, 1).text = date_str 
+                    table.cell(0, 0).text = date_str 
                     # 填入天气
-                    table.cell(1, 3).text = weather_str
+                    table.cell(0, 3).text = weather_str
             except Exception as table_e:
                 print(f"Warning: Table update skipped due to layout mismatch: {table_e}")
 
