@@ -296,6 +296,57 @@ async def update_appendix_tables(req: UpdateAppendixRequest):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+# ---------------- 新增：缺失的日期天气接口 ----------------
+
+class UpdateDateWeatherRequest(BaseModel):
+    document_base64: str
+    feishu_token: Optional[str] = None
+
+@app.post("/update-date-weather")
+async def update_date_weather(req: UpdateDateWeatherRequest):
+    try:
+        # 1. 解码 Word 文档
+        file_bytes = base64.b64decode(req.document_base64)
+        doc = Document(io.BytesIO(file_bytes))
+        
+        # 2. 获取当前日期和天气 (调用你已有的辅助函数)
+        now = datetime.now()
+        date_str = format_date_cn(now)
+        weather_info = get_pakbeng_weather() # 使用你代码里定义的帕克宾天气
+        weather_str = f"{weather_info['weather_cn']} {weather_info['temp_min']}℃-{weather_info['temp_max']}℃"
+        
+        # 3. 写入表格 (这里假设是第一个表格的特定位置，请根据你的模板调整索引！)
+        # 通常日报的表头在第一个表格
+        if doc.tables:
+            table = doc.tables[0]
+            # 示例：假设日期在第2行第2列(索引1,1)，天气在第2行第4列(索引1,3)
+            # 你需要根据你的 Word 模板实际格子位置修改下面的数字！
+            try:
+                # 这是一个保护性写法，防止表格太小报错
+                if len(table.rows) > 1 and len(table.rows[1].cells) > 4:
+                    # 填入日期
+                    table.cell(1, 1).text = date_str 
+                    # 填入天气
+                    table.cell(1, 3).text = weather_str
+            except Exception as table_e:
+                print(f"Warning: Table update skipped due to layout mismatch: {table_e}")
+
+        # 4. 保存并返回
+        out_stream = io.BytesIO()
+        doc.save(out_stream)
+        out_bytes = out_stream.getvalue()
+        b64_str = base64.b64encode(out_bytes).decode('utf-8')
+        
+        return {
+            "success": True,
+            "document_base64": b64_str
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "message": str(e)}
+
 @app.post("/update-personnel-stats")
 async def update_personnel_stats(req: UpdatePersonnelRequest):
     try:
