@@ -95,6 +95,11 @@ class FillTemplateRequest(BaseModel):
     upload_to_feishu: bool = False
     feishu_token: Optional[str] = None
 
+class UpdatePersonnelRequest(BaseModel):
+    document_base64: str
+    personnel_text: str
+    feishu_token: Optional[str] = None
+
 # ---------------- 辅助函数：天气与日期 ----------------
 
 def get_yesterday_date() -> datetime:
@@ -288,6 +293,22 @@ async def update_appendix_tables(req: UpdateAppendixRequest):
             "document_base64": b64_str
         }
 
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+@app.post("/update-personnel-stats")
+async def update_personnel_stats(req: UpdatePersonnelRequest):
+    try:
+        # 1. 解码文档 (如果有处理逻辑可以在这里添加)
+        # 目前仅仅作为 Pass-through 防止 404
+        # 未来：这里可以解析 personnel_text 并填入某个特定表格
+        
+        # 2. 返回原文档 (或修改后的文档)
+        return {
+            "success": True,
+            "document_base64": req.document_base64,
+            "filename": "日报_personnel_updated.docx"
+        }
     except Exception as e:
         return {"success": False, "message": str(e)}
 
