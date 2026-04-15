@@ -353,6 +353,166 @@ def split_text_prefix(line_text: str) -> tuple[str, str]:
     return line_text, ""
 
 
+def normalize_seq_text(value: Any) -> str:
+    text = normalize_text(value)
+    if not text:
+        return ""
+    match = re.search(r"\d+", text)
+    return match.group(0) if match else text
+
+
+def build_report_rows(payload: Any, *, locale: str) -> list[dict[str, str]]:
+    rows = parse_payload(payload)
+    rows = apply_workflow_matching_logic(rows, locale=locale)
+    prepared: list[dict[str, str]] = []
+    current_seq = ""
+
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+
+        seq = normalize_seq_text(item.get("seq"))
+        if seq:
+            current_seq = seq
+        if not current_seq:
+            continue
+
+        if locale == "cn":
+            prepared.append(
+                {
+                    "seq": current_seq,
+                    "location": normalize_text(item.get("location")),
+                    "content": normalize_text(item.get("content")),
+                    "quantity": normalize_text(item.get("quantity") or item.get("daily_qty")),
+                    "remark": normalize_text(item.get("remark") or item.get("shift")),
+                }
+            )
+        else:
+            prepared.append(
+                {
+                    "seq": current_seq,
+                    "location": normalize_text(item.get("location_en") or item.get("location")),
+                    "content": normalize_text(item.get("content_en") or item.get("content")),
+                    "quantity": normalize_text(
+                        item.get("quantity_en") or item.get("daily_qty_en") or item.get("quantity") or item.get("daily_qty")
+                    ),
+                    "remark": normalize_text(item.get("remarks_en") or item.get("remark_en") or item.get("shift") or item.get("remark")),
+                }
+            )
+
+    return prepared
+
+
+def set_cell_text_with_format(cell, text: str, *, bold: bool = False):
+    cell.text = ""
+    if not cell.paragraphs:
+        p = cell.add_paragraph()
+    else:
+        p = cell.paragraphs[0]
+    run = p.add_run(text)
+    format_run_font(run, bold=bold)
+
+
+def detect_template_groups(table, *, seq_col: int = 0) -> list[tuple[str, int, int]]:
+    if not table.rows:
+        return []
+
+    seq_rows: list[int] = []
+    for idx, row in enumerate(table.rows):
+        if len(row.cells) <= seq_col:
+            continue
+        if normalize_seq_text(row.cells[seq_col].text):
+            seq_rows.append(idx)
+
+    if not seq_rows:
+        return []
+
+    start_row = seq_rows[0]
+    prev_seq = normalize_seq_text(table.rows[start_row].cells[seq_col].text)
+    group_start = start_row
+    groups: list[tuple[str, int, int]] = []
+
+    for i in range(start_row + 1, len(table.rows)):
+        if len(table.rows[i].cells) <= seq_col:
+            continue
+        current_seq = normalize_seq_text(table.rows[i].cells[seq_col].text)
+        if current_seq and current_seq != prev_seq:
+            groups.append((prev_seq, group_start, i - 1))
+            group_start = i
+            prev_seq = current_seq
+
+    groups.append((prev_seq, group_start, len(table.rows) - 1))
+    return [(seq, start, end) for seq, start, end in groups if seq]
+
+
+def render_rows_to_grouped_table(table, payload: Any, *, locale: str) -> bool:
+    if not table.rows:
+        return False
+
+    cols_count = len(table.rows[0].cells)
+    if cols_count < 4:
+        return False
+
+    seq_col = 0
+    location_col = 1
+    if cols_count >= 6:
+        content_col, qty_col, remark_col = 3, 4, 5
+    else:
+        content_col, qty_col, remark_col = 2, 3, 4
+
+    groups = detect_template_groups(table, seq_col=seq_col)
+    if not groups:
+        return False
+
+    rows = build_report_rows(payload, locale=locale)
+    if not rows:
+        return False
+
+    grouped_input: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        seq = normalize_seq_text(row.get("seq"))
+        if not seq:
+            continue
+        grouped_input.setdefault(seq, []).append(row)
+
+    matched_group = False
+    for seq, start, end in groups:
+        items = grouped_input.get(seq, [])
+        if not items:
+            continue
+
+        matched_group = True
+        first = items[0]
+        if start < len(table.rows) and len(table.rows[start].cells) > seq_col:
+            set_cell_text_with_format(table.rows[start].cells[seq_col], seq)
+        if start < len(table.rows) and len(table.rows[start].cells) > location_col:
+            set_cell_text_with_format(table.rows[start].cells[location_col], first.get("location", ""))
+
+        span = end - start + 1
+        for offset in range(span):
+            row_idx = start + offset
+            if row_idx >= len(table.rows):
+                break
+            target_cells = table.rows[row_idx].cells
+            if offset < len(items):
+                data = items[offset]
+                if len(target_cells) > content_col:
+                    set_cell_text_with_format(target_cells[content_col], data.get("content", ""))
+                if len(target_cells) > qty_col:
+                    set_cell_text_with_format(target_cells[qty_col], data.get("quantity", ""))
+                if remark_col >= 0 and len(target_cells) > remark_col:
+                    set_cell_text_with_format(target_cells[remark_col], data.get("remark", ""))
+            else:
+                if len(target_cells) > content_col:
+                    set_cell_text_with_format(target_cells[content_col], "")
+                if len(target_cells) > qty_col:
+                    set_cell_text_with_format(target_cells[qty_col], "")
+                if remark_col >= 0 and len(target_cells) > remark_col:
+                    set_cell_text_with_format(target_cells[remark_col], "")
+
+    return matched_group
+
+
 def build_report_blocks(payload: Any, *, locale: str) -> list[dict[str, Any]]:
     """把原始数据整理成更接近 Word 报表布局的分组块。"""
     rows = parse_payload(payload)
@@ -448,6 +608,8 @@ def render_report_blocks_to_document(
 ):
     if doc.tables and len(doc.tables) > table_index:
         table = doc.tables[table_index]
+        if render_rows_to_grouped_table(table, payload, locale=locale):
+            return
         if len(table.rows) > row_index and len(table.rows[row_index].cells) > col_index:
             render_report_blocks_to_cell(table.cell(row_index, col_index), payload, locale=locale)
             return
@@ -735,8 +897,8 @@ class UpdateAppendixRequest(BaseModel):
 class GenerateFromTemplateRequest(BaseModel):
     chinese_data: Any
     english_data: Any
-    cn_template_base64: str
-    en_template_base64: str
+    cn_template_base64: Optional[str] = None
+    en_template_base64: Optional[str] = None
     update_date_weather: bool = False
     cn_table_index: int = 0
     cn_row_index: int = 4
@@ -840,11 +1002,8 @@ async def update_appendix_tables(req: UpdateAppendixRequest):
 @app.post("/generate-from-template")
 async def generate_from_template(req: GenerateFromTemplateRequest):
     try:
-        if req.cn_template_base64.strip() == req.en_template_base64.strip():
-            return {"success": False, "message": "cn_template_base64 and en_template_base64 must be different templates."}
-
-        cn_doc = decode_document(req.cn_template_base64)
-        en_doc = decode_document(req.en_template_base64)
+        cn_doc = decode_document(req.cn_template_base64) if req.cn_template_base64 else Document()
+        en_doc = decode_document(req.en_template_base64) if req.en_template_base64 else Document()
         warnings: list[dict[str, str]] = []
 
         render_report_blocks_to_document(
